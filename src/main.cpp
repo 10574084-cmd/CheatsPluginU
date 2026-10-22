@@ -13,6 +13,7 @@
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <wups.h>
+#include <wups/config_api.h>
 #include <wups/config/WUPSConfigItemBoolean.h>
 #include <notifications/notifications.h>
 
@@ -235,17 +236,24 @@ static bool StartWorker() {
     return true;
 }
 
+static WUPSConfigAPICallbackStatus ConfigMenuOpenedCallback(WUPSConfigCategoryHandle root);
+static void ConfigMenuClosedCallback();
+
 INITIALIZE_PLUGIN() {
     NotificationModule_InitLibrary();
-    if (WUPS_OpenStorage() == WUPS_STORAGE_ERROR_SUCCESS) {
-        WUPSStorageError result = WUPS_GetBool(nullptr, CFG_ENABLED, &gEnabled);
-        if (result == WUPS_STORAGE_ERROR_NOT_FOUND)
-            WUPS_StoreBool(nullptr, CFG_ENABLED, gEnabled);
-        result = WUPS_GetBool(nullptr, CFG_NOTIFICATIONS, &gNotifications);
-        if (result == WUPS_STORAGE_ERROR_NOT_FOUND)
-            WUPS_StoreBool(nullptr, CFG_NOTIFICATIONS, gNotifications);
-        WUPS_CloseStorage();
+
+    WUPSConfigAPIOptionsV1 configOptions = {.name = "CheatsPlugin"};
+    WUPSConfigAPI_Init(configOptions, ConfigMenuOpenedCallback, ConfigMenuClosedCallback);
+
+    WUPSStorageError result = WUPSStorageAPI_GetBool(nullptr, CFG_ENABLED, &gEnabled);
+    if (result == WUPS_STORAGE_ERROR_NOT_FOUND) {
+        WUPSStorageAPI_StoreBool(nullptr, CFG_ENABLED, gEnabled);
     }
+    result = WUPSStorageAPI_GetBool(nullptr, CFG_NOTIFICATIONS, &gNotifications);
+    if (result == WUPS_STORAGE_ERROR_NOT_FOUND) {
+        WUPSStorageAPI_StoreBool(nullptr, CFG_NOTIFICATIONS, gNotifications);
+    }
+    WUPSStorageAPI_SaveStorage(false);
 }
 
 DEINITIALIZE_PLUGIN() {
@@ -286,28 +294,39 @@ ON_APPLICATION_REQUESTS_EXIT() {
 
 static void EnabledChanged(ConfigItemBoolean *, bool value) {
     gEnabled = value;
-    WUPS_StoreBool(nullptr, CFG_ENABLED, value);
+    WUPSStorageAPI_StoreBool(nullptr, CFG_ENABLED, value);
 }
 
 static void NotificationsChanged(ConfigItemBoolean *, bool value) {
     gNotifications = value;
-    WUPS_StoreBool(nullptr, CFG_NOTIFICATIONS, value);
+    WUPSStorageAPI_StoreBool(nullptr, CFG_NOTIFICATIONS, value);
 }
 
-WUPS_GET_CONFIG() {
-    if (WUPS_OpenStorage() != WUPS_STORAGE_ERROR_SUCCESS) return 0;
-
-    WUPSConfigHandle config;
+static WUPSConfigAPICallbackStatus ConfigMenuOpenedCallback(WUPSConfigCategoryHandle root) {
     WUPSConfigCategoryHandle category;
-    WUPSConfig_CreateHandled(&config, "CheatsPlugin");
-    WUPSConfig_AddCategoryByNameHandled(config, "Settings", &category);
-    WUPSConfigItemBoolean_AddToCategoryHandled(config, category, CFG_ENABLED,
-        "Enable CheatsPlugin (next game launch)", gEnabled, &EnabledChanged);
-    WUPSConfigItemBoolean_AddToCategoryHandled(config, category, CFG_NOTIFICATIONS,
-        "Notifications", gNotifications, &NotificationsChanged);
-    return config;
+    WUPSConfigAPICreateCategoryOptionsV1 categoryOptions = {.name = "Settings"};
+    if (WUPSConfigAPI_Category_Create(categoryOptions, &category) != WUPSCONFIG_API_RESULT_SUCCESS) {
+        return WUPSCONFIG_API_CALLBACK_RESULT_ERROR;
+    }
+
+    if (WUPSConfigItemBoolean_AddToCategory(category, CFG_ENABLED,
+            "Enable CheatsPlugin (next game launch)", true, gEnabled, &EnabledChanged) !=
+        WUPSCONFIG_API_RESULT_SUCCESS) {
+        return WUPSCONFIG_API_CALLBACK_RESULT_ERROR;
+    }
+
+    if (WUPSConfigItemBoolean_AddToCategory(category, CFG_NOTIFICATIONS,
+            "Notifications", true, gNotifications, &NotificationsChanged) !=
+        WUPSCONFIG_API_RESULT_SUCCESS) {
+        return WUPSCONFIG_API_CALLBACK_RESULT_ERROR;
+    }
+
+    if (WUPSConfigAPI_Category_AddCategory(root, category) != WUPSCONFIG_API_RESULT_SUCCESS) {
+        return WUPSCONFIG_API_CALLBACK_RESULT_ERROR;
+    }
+    return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
 }
 
-WUPS_CONFIG_CLOSED() {
-    WUPS_CloseStorage();
+static void ConfigMenuClosedCallback() {
+    WUPSStorageAPI_SaveStorage(false);
 }
