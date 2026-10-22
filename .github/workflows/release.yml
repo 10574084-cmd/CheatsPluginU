@@ -1,0 +1,38 @@
+name: Release CheatsPlugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag, e.g. v0.1.0"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Aroma plugin
+        run: |
+          docker build -t cheatsplugin-builder .
+          docker run --rm -v "$PWD:/project" -w /project cheatsplugin-builder make
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$TAG" CheatsPlugin.wps \
+            --title "CheatsPlugin $TAG" \
+            --notes "## CheatsPlugin $TAG
+
+          Aroma plugin for Wii U.
+
+          ### Installation
+          Copy `CheatsPlugin.wps` to `sd:/wiiu/environments/aroma/plugins/`.
+
+          ### Important
+          This build has compiled successfully, but must still be tested on real Wii U hardware. See the repository README for the supported cheat-file format and dependencies."
