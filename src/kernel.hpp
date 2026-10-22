@@ -11,10 +11,8 @@ static inline void CheatsPlugin_WriteU32(uint32_t address, uint32_t value) {
     DCFlushRange(&localValue, sizeof(localValue));
     ICInvalidateRange(&localValue, sizeof(localValue));
 
-    const uint32_t destination =
-        (uint32_t)OSEffectiveToPhysical((void *)(uintptr_t)address);
-    const uint32_t source =
-        (uint32_t)OSEffectiveToPhysical((void *)&localValue);
+    const uint32_t destination = OSEffectiveToPhysical(address);
+    const uint32_t source = OSEffectiveToPhysical((uint32_t)(uintptr_t)&localValue);
     KernelCopyData(destination, source, sizeof(localValue));
 
     DCFlushRange((void *)(uintptr_t)address, sizeof(localValue));
