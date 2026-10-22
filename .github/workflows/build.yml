@@ -1,0 +1,20 @@
+name: Build CheatsPlugin
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Aroma plugin
+        run: |
+          docker build -t cheatsplugin-builder .
+          docker run --rm -v "$PWD:/project" -w /project cheatsplugin-builder make
+      - name: Upload WPS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CheatsPlugin-wps
+          path: CheatsPlugin.wps
+          if-no-files-found: error
