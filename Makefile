@@ -18,7 +18,7 @@ CFLAGS += $(INCLUDE) -D__WIIU__ -D__WUT__ -D__WUPS__
 CXXFLAGS := $(CFLAGS) -std=gnu++17
 ASFLAGS := -g $(ARCH)
 LDFLAGS = -g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) -T$(WUMS_ROOT)/share/libkernel.ld $(WUPSSPECS)
-LIBS := -lwups -lwut -lwums -lnotifications -lkernel
+LIBS := -lwups -lwut -lnotifications -lkernel
 LIBDIRS := $(PORTLIBS) $(DEVKITPRO)/wups $(WUT_ROOT) $(WUMS_ROOT)
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 export OUTPUT := $(CURDIR)/$(TARGET)
