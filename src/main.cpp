@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cctype>
 #include <atomic>
 #include <utility>
@@ -26,7 +27,7 @@
 
 WUPS_PLUGIN_NAME("CheatsPlugin");
 WUPS_PLUGIN_DESCRIPTION("Finds compatible online Wii U cheats by Title ID and loads local cheat files.");
-WUPS_PLUGIN_VERSION("0.3.0");
+WUPS_PLUGIN_VERSION("0.4.0");
 WUPS_PLUGIN_AUTHOR("CheatsPlugin");
 WUPS_PLUGIN_LICENSE("GPL-3.0-or-later");
 
@@ -46,10 +47,13 @@ static constexpr const char *CFG_NOTIFICATIONS = "notifications";
 static constexpr const char *CFG_ONLINE_SEARCH = "online_search";
 
 static constexpr size_t MAX_ONLINE_CHEATS = 48;
-static constexpr size_t MAX_HTTP_BYTES = 256 * 1024;
+static constexpr size_t MAX_HTTP_BYTES = 1024 * 1024;
+static constexpr size_t MAX_DATABASE_INDEXES = 1024;
 static constexpr size_t MAX_ONLINE_WRITES_PER_CHEAT = 128;
 static constexpr const char *ONLINE_DB_BASE =
     "https://raw.githubusercontent.com/vincent-coding/uCodes/main/views/pages/cheats/";
+static constexpr const char *ONLINE_DB_DIRECTORY_URL =
+    "https://api.github.com/repos/vincent-coding/uCodes/contents/views/pages/cheats?ref=main";
 
 struct MemoryWrite {
     uint32_t address;
@@ -272,7 +276,12 @@ static bool DownloadOnlineText(const std::string &url, std::string *output) {
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 2L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "CheatsPluginU/0.3");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "CheatsPluginU/0.4");
+    struct curl_slist *headers = nullptr;
+    if (url.find("https://api.github.com/") == 0) {
+        headers = curl_slist_append(headers, "Accept: application/vnd.github+json");
+        if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    }
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, OnlineDownloadWrite);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, output);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
@@ -282,6 +291,7 @@ static bool DownloadOnlineText(const std::string &url, std::string *output) {
     long responseCode = 0;
     if (result == CURLE_OK) curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
     curl_easy_cleanup(curl);
+    if (headers) curl_slist_free_all(headers);
     return result == CURLE_OK && responseCode == 200;
 }
 
@@ -521,33 +531,93 @@ static void ParseOnlineCodesJson(const std::string &codesJson, uint64_t titleId,
     }
 }
 
-static bool SearchOnlineCheats(uint64_t titleId) {
-    bool anyIndexFetched = false;
-    int matchedDatabaseIndex = -1;
+static bool ParseDatabaseIndexName(const std::string &name, unsigned int *output) {
+    if (!output || name.empty()) return false;
+    for (unsigned char c : name) {
+        if (!std::isdigit(c)) return false;
+    }
 
-    // The current uCodes directory has four indexed game records (0..3).
-    // The match is by the exact 64-bit Title ID, not by a guessed game name.
-    for (int index = 0; index < 4; ++index) {
-        char url[180];
-        std::snprintf(url, sizeof(url), "%s%d/info.json", ONLINE_DB_BASE, index);
+    errno = 0;
+    char *end = nullptr;
+    const unsigned long value = std::strtoul(name.c_str(), &end, 10);
+    if (errno != 0 || !end || *end != '\0' || value > 1000000ul) return false;
+    *output = static_cast<unsigned int>(value);
+    return true;
+}
+
+// Download the live directory listing instead of assuming game indexes are 0..3.
+// New numeric folders in the upstream uCodes catalog are discovered automatically over Wi-Fi.
+static bool DiscoverOnlineDatabaseIndexes(std::vector<unsigned int> *indexes) {
+    if (!indexes) return false;
+    indexes->clear();
+
+    std::string listing;
+    if (!DownloadOnlineText(ONLINE_DB_DIRECTORY_URL, &listing)) return false;
+
+    size_t cursor = 0;
+    while (indexes->size() < MAX_DATABASE_INDEXES) {
+        const size_t objectStart = listing.find('{', cursor);
+        if (objectStart == std::string::npos) break;
+        const size_t objectEnd = FindJsonObjectEnd(listing, objectStart);
+        if (objectEnd == std::string::npos) break;
+
+        const std::string object = listing.substr(objectStart, objectEnd - objectStart + 1);
+        cursor = objectEnd + 1;
+
+        std::string name, type;
+        if (!ReadJsonString(object, "name", &name) ||
+            !ReadJsonString(object, "type", &type) || type != "dir") continue;
+
+        unsigned int index = 0;
+        if (ParseDatabaseIndexName(name, &index)) indexes->push_back(index);
+    }
+
+    std::sort(indexes->begin(), indexes->end());
+    indexes->erase(std::unique(indexes->begin(), indexes->end()), indexes->end());
+    return !indexes->empty();
+}
+
+static bool SearchOnlineCheats(uint64_t titleId) {
+    std::vector<unsigned int> indexes;
+    if (!DiscoverOnlineDatabaseIndexes(&indexes)) {
+        Notify("CheatsPlugin: cannot download the online catalog; check Wi-Fi and CURLWrapperModule");
+        return false;
+    }
+
+    size_t infoFetched = 0;
+    bool matchedDatabase = false;
+    unsigned int matchedDatabaseIndex = 0;
+
+    // Inspect every discoverable numeric game folder from the online catalog.
+    // The match remains an exact 64-bit Title ID check; we never guess by game name.
+    for (const unsigned int index : indexes) {
+        char url[240];
+        std::snprintf(url, sizeof(url), "%s%u/info.json", ONLINE_DB_BASE, index);
         std::string infoJson;
         if (!DownloadOnlineText(url, &infoJson)) continue;
-        anyIndexFetched = true;
+        ++infoFetched;
         if (OnlineTitleIdMatches(infoJson, titleId)) {
             matchedDatabaseIndex = index;
+            matchedDatabase = true;
             break;
         }
     }
 
-    if (matchedDatabaseIndex < 0) {
-        Notify(anyIndexFetched
-            ? "CheatsPlugin: no online database entry matched this Title ID"
-            : "CheatsPlugin: online lookup failed; check Internet and CURLWrapperModule");
+    if (!matchedDatabase) {
+        if (infoFetched == 0) {
+            Notify("CheatsPlugin: catalog loaded, but game metadata could not be downloaded");
+        } else {
+            char message[128];
+            std::snprintf(message, sizeof(message),
+                          "CheatsPlugin: no Title ID match in %u catalog entries",
+                          static_cast<unsigned>(infoFetched));
+            Notify(message);
+        }
         return false;
     }
 
-    char codesUrl[180];
-    std::snprintf(codesUrl, sizeof(codesUrl), "%s%d/codes.json",
+    char codesUrl[240];
+    std::snprintf(codesUrl, sizeof(codesUrl), "%s%u/codes.json",
                   ONLINE_DB_BASE, matchedDatabaseIndex);
     std::string codesJson;
     if (!DownloadOnlineText(codesUrl, &codesJson)) {
