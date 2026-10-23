@@ -29,7 +29,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || 'v0.2.0' }}
+          TAG: ${{ inputs.tag || 'v0.3.0' }}
         run: |
           gh release create "$TAG" CheatsPlugin.wps \
             --title "CheatsPlugin $TAG" \
@@ -38,7 +38,7 @@ jobs:
           Aroma plugin for Wii U. Version 0.3.0 adds online Title-ID lookup for compatible direct poke32 cheats. CURLWrapperModule.wms is required for HTTPS requests.
 
           ### Installation
-          Copy `CheatsPlugin.wps` to `sd:/wiiu/environments/aroma/plugins/`.
+          Copy CheatsPlugin.wps to sd:/wiiu/environments/aroma/plugins/.
 
           ### Important
-          This build has compiled successfully, but must still be tested on real Wii U hardware. See the repository README for the supported cheat-file format and dependencies."
+          The plugin searches uCodes by Title ID and only enables compatible direct poke32 entries. Install CURLWrapperModule.wms in Aroma for HTTPS. The build still needs testing on real Wii U hardware; see README.md for limits and setup."
