@@ -22,7 +22,11 @@ La versión 0.5.0 solicita explícitamente `WUPS_FS_ACCESS()` para leer la SD y 
 
 1. Wii U con Aroma y conexión a Internet.
 2. `CheatsPlugin.wps` en `sd:/wiiu/environments/aroma/plugins/`.
-3. `CURLWrapperModule.wms` instalado en `sd:/wiiu/environments/aroma/modules/` para las solicitudes HTTPS. Descárgalo del repositorio oficial: https://github.com/wiiu-env/CURLWrapperModule.
+3. `KernelModule.wms` instalado en `sd:/wiiu/environments/aroma/modules/` para que libkernel escriba en la memoria del juego. Descarga: https://github.com/wiiu-env/KernelModule/releases/tag/v0.2.3.
+4. `WUMSLoader` en `sd:/wiiu/environments/aroma/modules/setup/`, requisito de KernelModule: https://github.com/wiiu-env/WUMSLoader.
+5. `CURLWrapperModule.wms` en `sd:/wiiu/environments/aroma/modules/` para HTTPS. Descarga: https://github.com/wiiu-env/CURLWrapperModule/releases/tag/v0.1.3.
+
+Importante: si KernelModule no está funcionando mediante WUMSLoader, los nombres pueden aparecer, pero los trucos de memoria no se aplicarán.
 
 El plugin se enlaza con `libcurlwrapper`, pero el archivo `CURLWrapperModule.wms` debe instalarse por separado en la SD.
 
@@ -32,6 +36,9 @@ Los archivos locales van en `sd:/wiiu/cheatsPlugin/TITLE_ID/`. Cada archivo `.tx
 
     0xDIRECCION = 0xVALOR
     10517B8C = 80800000
+
+    00020000 10517B8C
+    80800000 00000000
 
 ## Fuente y límites
 

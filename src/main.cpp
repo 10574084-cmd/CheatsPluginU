@@ -26,17 +26,14 @@
 #include "kernel.hpp"
 
 WUPS_PLUGIN_NAME("CheatsPlugin");
-WUPS_PLUGIN_DESCRIPTION("Finds compatible online Wii U cheats by Title ID and loads local cheat files.");
+WUPS_PLUGIN_DESCRIPTION("Loads local Wii U cheats and searches online by Title ID.");
 WUPS_PLUGIN_VERSION("0.5.0");
 WUPS_PLUGIN_AUTHOR("CheatsPlugin");
 WUPS_PLUGIN_LICENSE("GPL-3.0-or-later");
 
 WUPS_USE_WUT_DEVOPTAB();
-WUPS_FS_ACCESS()
-WUPS_ALLOW_KERNEL()
 WUPS_USE_STORAGE("cheatsplugin");
 
-static constexpr const char *CHEATS_ROOT = "sd:/wiiu/cheatsPlugin/";
 static constexpr size_t MAX_CHEATS = 64;
 static constexpr size_t MAX_WRITES_PER_FILE = 128;
 static constexpr size_t MAX_FILE_BYTES = 64 * 1024;
@@ -81,8 +78,6 @@ static std::vector<OnlineCheat> gOnlineCheats;
 static std::atomic<bool> gOnlineCheatEnabled[MAX_ONLINE_CHEATS];
 static std::mutex gOnlineCheatsMutex;
 static std::atomic<bool> gOnlineSearchEnabled{true};
-static std::atomic<bool> gKernelAccess{false};
-static std::atomic<bool> gSdMounted{false};
 static bool gCurlInitialized = false;
 static bool gEnabled = true;
 static bool gNotifications = true;
@@ -147,6 +142,42 @@ static bool ParseHex32(char *text, uint32_t *out) {
     return true;
 }
 
+static bool ParseTwoHexWords(char *line, uint32_t *first, uint32_t *second) {
+    if (!line || !first || !second) return false;
+    char *content = Trim(line);
+    if (!*content) return false;
+    char *separator = content;
+    while (*separator && !std::isspace((unsigned char)*separator)) ++separator;
+    if (!*separator) return false;
+    *separator++ = '\0';
+    char *secondText = Trim(separator);
+    if (!*secondText) return false;
+    char *end = secondText;
+    while (*end && !std::isspace((unsigned char)*end)) ++end;
+    if (*end) {
+        *end++ = '\0';
+        if (*Trim(end)) return false;
+    }
+    return ParseHex32(content, first) && ParseHex32(secondText, second);
+}
+
+static bool ParseLocalPokeLine(const std::string &line, uint32_t *address, uint32_t *value) {
+    if (!address || !value) return false;
+    const std::string prefix = "gecko.poke32(";
+    if (line.compare(0, prefix.size(), prefix) != 0 ||
+        line.size() <= prefix.size() || line.back() != ')') return false;
+    const std::string args = line.substr(prefix.size(), line.size() - prefix.size() - 1);
+    const size_t comma = args.find(',');
+    if (comma == std::string::npos || args.find(',', comma + 1) != std::string::npos) return false;
+    const std::string addressText = args.substr(0, comma);
+    const std::string valueText = args.substr(comma + 1);
+    char addressBuffer[32], valueBuffer[32];
+    if (addressText.size() >= sizeof(addressBuffer) || valueText.size() >= sizeof(valueBuffer)) return false;
+    std::snprintf(addressBuffer, sizeof(addressBuffer), "%s", addressText.c_str());
+    std::snprintf(valueBuffer, sizeof(valueBuffer), "%s", valueText.c_str());
+    return ParseHex32(addressBuffer, address) && ParseHex32(valueBuffer, value);
+}
+
 static bool IsSafeGameAddress(uint32_t address) {
     return (address & 3u) == 0 && address >= MIN_GAME_ADDRESS &&
            address < MAX_GAME_ADDRESS;
@@ -186,13 +217,13 @@ static bool LoadCheatFile(const char *folder, const char *filename, CheatFile *c
     cheat->name = filename;
     cheat->writes.clear();
     char line[256];
+    uint32_t pendingCafeAddress = 0;
 
     while (std::fgets(line, sizeof(line), file)) {
         char *content = Trim(line);
         if (!*content || *content == '#' || *content == ';' ||
             (content[0] == '/' && content[1] == '/')) continue;
 
-        // Strip inline comments.
         char *comment = std::strchr(content, '#');
         char *semicolon = std::strchr(content, ';');
         char *slashComment = std::strstr(content, "//");
@@ -202,18 +233,40 @@ static bool LoadCheatFile(const char *folder, const char *filename, CheatFile *c
         content = Trim(content);
         if (!*content) continue;
 
-        // Local direct writes: ADDRESS = VALUE or ADDRESS: VALUE.
-        // Ignore headers and unsupported code-handler lines rather than discarding valid rows.
+        uint32_t address = 0, value = 0;
+        if (ParseLocalPokeLine(content, &address, &value)) {
+            if (IsSafeGameAddress(address) && cheat->writes.size() < MAX_WRITES_PER_FILE)
+                cheat->writes.push_back({address, value});
+            continue;
+        }
+
         char *separator = std::strchr(content, '=');
         if (!separator) separator = std::strchr(content, ':');
-        if (!separator) continue;
-        *separator = '\0';
+        if (separator) {
+            *separator = '\0';
+            if (ParseHex32(content, &address) && ParseHex32(separator + 1, &value) &&
+                IsSafeGameAddress(address) && cheat->writes.size() < MAX_WRITES_PER_FILE)
+                cheat->writes.push_back({address, value});
+            continue;
+        }
 
-        uint32_t address = 0, value = 0;
-        if (!ParseHex32(content, &address) || !ParseHex32(separator + 1, &value) ||
-            !IsSafeGameAddress(address)) continue;
-        if (cheat->writes.size() >= MAX_WRITES_PER_FILE) break;
-        cheat->writes.push_back({address, value});
+        // Supported direct Cafe .cht shape: 00020000 ADDRESS, then VALUE 00000000.
+        // Also accept direct ADDRESS VALUE rows; complex handlers remain unsupported.
+        uint32_t first = 0, second = 0;
+        if (!ParseTwoHexWords(content, &first, &second)) continue;
+        if (first == 0x00020000 && IsSafeGameAddress(second)) {
+            pendingCafeAddress = second;
+            continue;
+        }
+        if (pendingCafeAddress != 0 && second == 0) {
+            if (cheat->writes.size() < MAX_WRITES_PER_FILE)
+                cheat->writes.push_back({pendingCafeAddress, first});
+            pendingCafeAddress = 0;
+            continue;
+        }
+        pendingCafeAddress = 0;
+        if (IsSafeGameAddress(first) && cheat->writes.size() < MAX_WRITES_PER_FILE)
+            cheat->writes.push_back({first, second});
     }
 
     std::fclose(file);
@@ -230,35 +283,47 @@ static bool LoadCheatFile(const char *folder, const char *filename, CheatFile *c
     return true;
 }
 
-static bool LoadCheatsForTitle(uint64_t titleId) {
+static bool LoadCheatsForTitle(uint64_t titleId, bool *folderFound = nullptr) {
     gCheats.clear();
-    char folder[256];
-    const int written = std::snprintf(folder, sizeof(folder), "%s%016llX/",
-                                      CHEATS_ROOT, (unsigned long long)titleId);
-    if (written < 0 || (size_t)written >= sizeof(folder)) return false;
+    if (folderFound) *folderFound = false;
 
-    DIR *dir = opendir(folder);
-    if (!dir) return false;
+    const char *roots[] = {
+        "sd:/wiiu/cheatsPlugin/",
+        "fs:/vol/external01/wiiu/cheatsPlugin/"
+    };
+    char titleFolder16[17];
+    char titleFolder8[9];
+    std::snprintf(titleFolder16, sizeof(titleFolder16), "%016llX", (unsigned long long)titleId);
+    std::snprintf(titleFolder8, sizeof(titleFolder8), "%08X", (unsigned int)titleId);
+    const char *folderNames[] = {titleFolder16, titleFolder8};
+    char folder[320];
 
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != nullptr && gCheats.size() < MAX_CHEATS) {
-        const char *name = entry->d_name;
-        if (name[0] == '.' ||
-            (!HasExtension(name, ".txt") && !HasExtension(name, ".cht"))) {
-            continue;
-        }
+    for (const char *root : roots) {
+        for (const char *folderName : folderNames) {
+            const int written = std::snprintf(folder, sizeof(folder), "%s%s/", root, folderName);
+            if (written < 0 || (size_t)written >= sizeof(folder)) continue;
+            DIR *dir = opendir(folder);
+            if (!dir) continue;
+            if (folderFound) *folderFound = true;
 
-        CheatFile cheat;
-        if (LoadCheatFile(folder, name, &cheat)) {
-            const size_t index = gCheats.size();
-            gCheatEnabled[index].store(cheat.enabled, std::memory_order_relaxed);
-            gCheats.push_back(std::move(cheat));
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != nullptr && gCheats.size() < MAX_CHEATS) {
+                const char *name = entry->d_name;
+                if (name[0] == '.' ||
+                    (!HasExtension(name, ".txt") && !HasExtension(name, ".cht"))) continue;
+                CheatFile cheat;
+                if (LoadCheatFile(folder, name, &cheat)) {
+                    const size_t index = gCheats.size();
+                    gCheatEnabled[index].store(cheat.enabled, std::memory_order_relaxed);
+                    gCheats.push_back(std::move(cheat));
+                }
+            }
+            closedir(dir);
+            if (!gCheats.empty()) return true;
         }
     }
-    closedir(dir);
-    return !gCheats.empty();
+    return false;
 }
-
 
 // Online search uses uCodes' public JSON database. It imports only simple
 // gecko.poke32 writes; pointer loops, placeholders, conditionals and Cafe
@@ -671,7 +736,6 @@ static bool SearchOnlineCheats(uint64_t titleId) {
 }
 
 static void ApplyAllOnlineCheats() {
-    if (!gKernelAccess.load(std::memory_order_relaxed)) return;
     std::lock_guard<std::mutex> lock(gOnlineCheatsMutex);
     for (size_t index = 0; index < gOnlineCheats.size(); ++index) {
         if (!gOnlineCheatEnabled[index].load(std::memory_order_relaxed)) continue;
@@ -688,7 +752,6 @@ static size_t TotalWrites() {
 }
 
 static void ApplyAllCheats() {
-    if (!gKernelAccess.load(std::memory_order_relaxed)) return;
     for (size_t index = 0; index < gCheats.size(); ++index) {
         if (!gCheatEnabled[index].load(std::memory_order_relaxed)) continue;
         for (const auto &write : gCheats[index].writes) {
@@ -776,9 +839,7 @@ DEINITIALIZE_PLUGIN() {
     NotificationModule_DeInitLibrary();
 }
 
-ON_APPLICATION_START(args) {
-    gKernelAccess.store(args.kernel_access, std::memory_order_relaxed);
-    gSdMounted.store(args.sd_mounted, std::memory_order_relaxed);
+ON_APPLICATION_START() {
     StopWorker();
     gCheats.clear();
     {
@@ -792,16 +853,12 @@ ON_APPLICATION_START(args) {
 
     if (!gEnabled || IsSystemTitle(gActiveTitleId)) return;
 
-    if (!args.kernel_access) {
-        Notify("CheatsPlugin: kernel access unavailable; cheat writes are disabled");
-    }
-    if (!args.sd_mounted) {
-        Notify("CheatsPlugin: SD card is not mounted; local files cannot be read");
-    }
-
-    const bool hasLocalCheats = args.sd_mounted && LoadCheatsForTitle(gActiveTitleId);
-    if (args.sd_mounted && !hasLocalCheats) {
-        Notify("CheatsPlugin: no valid local cheats found; check Title ID folder and address=value format");
+    bool localFolderFound = false;
+    const bool hasLocalCheats = LoadCheatsForTitle(gActiveTitleId, &localFolderFound);
+    if (!hasLocalCheats) {
+        Notify(localFolderFound
+            ? "CheatsPlugin: local folder exists, but no supported direct writes were found"
+            : "CheatsPlugin: no local folder for this Title ID; checking online only");
     }
     if (hasLocalCheats) {
         char message[100];
