@@ -1,42 +1,45 @@
 # CheatsPluginU
 
-Plugin de Aroma para Wii U que carga archivos de trucos por Title ID.
+Plugin de Aroma para Wii U que carga archivos de trucos por Title ID desde la tarjeta SD y permite activar o desactivar cada archivo desde la configuración de WUPS.
 
-## Descargar
-
-El archivo compilado `CheatsPlugin.wps` se guarda en la raíz de este repositorio. Cada compilación de GitHub Actions lo genera y actualiza automáticamente.
-
-## Instalación
+## Descargar e instalar
 
 1. Usa una Wii U con Aroma instalado.
-2. Copia `CheatsPlugin.wps` a `sd:/wiiu/environments/aroma/plugins/CheatsPlugin.wps`.
-3. Crea una carpeta para el juego en `sd:/wiiu/cheatsPlugin/TITLE_ID/`, con su Title ID de 16 caracteres hexadecimales en mayúsculas.
-4. Guarda tus archivos `.txt` o `.cht` en esa carpeta y reinicia el juego.
+2. Descarga el artefacto CheatsPlugin-wps de GitHub Actions o el archivo de una versión publicada.
+3. Copia CheatsPlugin.wps a sd:/wiiu/environments/aroma/plugins/CheatsPlugin.wps.
+4. Crea una carpeta para el juego en sd:/wiiu/cheatsPlugin/TITLE_ID/, usando el Title ID real de 16 caracteres hexadecimales en mayúsculas.
+5. Guarda cada conjunto de trucos en un archivo .txt o .cht dentro de esa carpeta y abre la configuración del plugin cuando el juego correspondiente esté activo.
 
 Ejemplo de estructura:
 
-```text
-sd:/wiiu/
-├── environments/aroma/plugins/CheatsPlugin.wps
-└── cheatsPlugin/
-    └── 000500001234ABCD/
-        └── ejemplo.txt
-```
+    sd:/wiiu/
+    ├── environments/aroma/plugins/CheatsPlugin.wps
+    └── cheatsPlugin/
+        └── 000500001234ABCD/
+            ├── velocidad.txt
+            └── monedas.cht
 
-## Formato de archivo
+Los nombres y Title ID del ejemplo son marcadores de posición. Usa el Title ID exacto del juego instalado y códigos verificados para su versión.
 
-Esta versión **no interpreta códigos Gecko, Action Replay ni formatos de otros gestores de trucos**. Cada línea válida debe ser una escritura de 32 bits en el formato:
+## Formato compatible
 
-```text
-0xDIRECCION = 0xVALOR
-```
+Esta versión no interpreta códigos Gecko, Action Replay ni formatos de otros gestores de trucos. Cada línea válida debe ser una escritura de 32 bits, con este formato:
 
-Por ejemplo, los números de arriba son marcadores de posición, no un truco válido. Usa únicamente direcciones y valores verificados para el juego y la versión exactos. Las direcciones deben estar alineadas a 4 bytes y dentro del rango que acepta el plugin.
+    0xDIRECCION = 0xVALOR
 
-Todos los archivos válidos dentro de la carpeta del juego se aplican automáticamente; esta versión todavía no incluye una lista para activar o desactivar trucos individualmente. Un código incorrecto puede bloquear el juego o provocar pérdida de progreso. Prueba primero con datos guardados respaldados.
+Los valores anteriores son marcadores, no un truco funcional. Se permiten líneas vacías y comentarios que empiezan con # o ;. Las direcciones deben estar alineadas a 4 bytes y dentro del rango aceptado por el plugin.
 
-## Dependencias y estado
+## Activar y desactivar archivos
 
-Necesita Aroma y los módulos de runtime que usa el plugin (incluidos KernelModule y NotificationModule). La compilación correcta solo confirma que se generó el binario; el funcionamiento real debe probarse en la consola.
+- Cada archivo válido aparece como interruptor individual en la configuración de CheatsPluginU cuando el juego correspondiente está activo.
+- El estado de cada archivo se guarda de forma independiente por juego y nombre de archivo.
+- Desactivar un archivo detiene la reaplicación de sus escrituras. Los cambios de memoria que ya se hayan aplicado no necesariamente se revierten.
+- El interruptor global para habilitar o deshabilitar el plugin sigue disponible. Los cambios de ese interruptor global se aplican en el siguiente inicio del juego.
 
-El código fuente y el workflow de compilación están disponibles en este repositorio.
+## Límites y seguridad
+
+- Usa únicamente direcciones y valores verificados para el juego, Title ID y versión exactos. Un código incorrecto puede congelar el juego o alterar datos de la partida.
+- Haz una copia de seguridad de los datos guardados y prueba primero en modo local.
+- Solo se admiten escrituras directas de 32 bits. No se admiten códigos condicionales, códigos multilínea con sintaxis propia ni descifrado de códigos.
+- El plugin requiere Aroma y los módulos de runtime que utiliza, incluidos KernelModule y NotificationModule.
+- Que GitHub Actions compile el archivo confirma que se generó el binario; no demuestra que cada código funcione en una Wii U real. La prueba final debe hacerse en la consola.

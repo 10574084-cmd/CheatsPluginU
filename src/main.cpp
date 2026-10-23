@@ -1,4 +1,6 @@
 #include <cctype>
+#include <atomic>
+#include <utility>
 #include <cstdint>
 #include <cerrno>
 #include <cstdio>
@@ -20,15 +22,15 @@
 #include "kernel.hpp"
 
 WUPS_PLUGIN_NAME("CheatsPlugin");
-WUPS_PLUGIN_DESCRIPTION("Loads per-title .cht/.txt cheats from the SD card.");
-WUPS_PLUGIN_VERSION("0.1.0");
+WUPS_PLUGIN_DESCRIPTION("Loads per-title .cht/.txt cheats from the SD card with per-file toggles.");
+WUPS_PLUGIN_VERSION("0.2.0");
 WUPS_PLUGIN_AUTHOR("CheatsPlugin");
 WUPS_PLUGIN_LICENSE("GPL-3.0-or-later");
 
 WUPS_USE_WUT_DEVOPTAB();
 WUPS_USE_STORAGE("cheatsplugin");
 
-static constexpr const char *CHEATS_ROOT = "fs:/vol/external01/wiiu/cheatsPlugin/";
+static constexpr const char *CHEATS_ROOT = "sd:/wiiu/cheatsPlugin/";
 static constexpr size_t MAX_CHEATS = 64;
 static constexpr size_t MAX_WRITES_PER_FILE = 128;
 static constexpr size_t MAX_FILE_BYTES = 64 * 1024;
@@ -46,10 +48,13 @@ struct MemoryWrite {
 
 struct CheatFile {
     std::string name;
+    std::string configId;
     std::vector<MemoryWrite> writes;
+    bool enabled = true;
 };
 
 static std::vector<CheatFile> gCheats;
+static std::atomic<bool> gCheatEnabled[MAX_CHEATS];
 static bool gEnabled = true;
 static bool gNotifications = true;
 static volatile bool gWorkerRunning = false;
@@ -110,6 +115,25 @@ static bool IsSafeGameAddress(uint32_t address) {
            address < MAX_GAME_ADDRESS;
 }
 
+// Stable, title-specific WUPS storage key based on folder and filename.
+static std::string MakeCheatConfigId(const char *folder, const char *filename) {
+    uint32_t hash = 2166136261u;
+    const auto addText = [&hash](const char *text) {
+        for (const unsigned char *p = reinterpret_cast<const unsigned char *>(text); *p; ++p) {
+            hash ^= *p;
+            hash *= 16777619u;
+        }
+    };
+    addText(folder);
+    hash ^= 0xFFu;
+    hash *= 16777619u;
+    addText(filename);
+
+    char id[24];
+    std::snprintf(id, sizeof(id), "cheat_%08X", (unsigned)hash);
+    return std::string(id);
+}
+
 static bool LoadCheatFile(const char *folder, const char *filename, CheatFile *cheat) {
     char path[320];
     const int written = std::snprintf(path, sizeof(path), "%s%s", folder, filename);
@@ -162,6 +186,15 @@ static bool LoadCheatFile(const char *folder, const char *filename, CheatFile *c
         cheat->writes.clear();
         return false;
     }
+
+    cheat->configId = MakeCheatConfigId(folder, filename);
+    cheat->enabled = true;
+    const WUPSStorageError storageResult =
+        WUPSStorageAPI_GetBool(nullptr, cheat->configId.c_str(), &cheat->enabled);
+    if (storageResult == WUPS_STORAGE_ERROR_NOT_FOUND) {
+        cheat->enabled = true;
+        WUPSStorageAPI_StoreBool(nullptr, cheat->configId.c_str(), true);
+    }
     return true;
 }
 
@@ -184,7 +217,11 @@ static bool LoadCheatsForTitle(uint64_t titleId) {
         }
 
         CheatFile cheat;
-        if (LoadCheatFile(folder, name, &cheat)) gCheats.push_back(cheat);
+        if (LoadCheatFile(folder, name, &cheat)) {
+            const size_t index = gCheats.size();
+            gCheatEnabled[index].store(cheat.enabled, std::memory_order_relaxed);
+            gCheats.push_back(std::move(cheat));
+        }
     }
     closedir(dir);
     return !gCheats.empty();
@@ -197,8 +234,9 @@ static size_t TotalWrites() {
 }
 
 static void ApplyAllCheats() {
-    for (const auto &cheat : gCheats) {
-        for (const auto &write : cheat.writes) {
+    for (size_t index = 0; index < gCheats.size(); ++index) {
+        if (!gCheatEnabled[index].load(std::memory_order_relaxed)) continue;
+        for (const auto &write : gCheats[index].writes) {
             CheatsPlugin_WriteU32(write.address, write.value);
         }
     }
@@ -302,6 +340,23 @@ static void NotificationsChanged(ConfigItemBoolean *, bool value) {
     WUPSStorageAPI_StoreBool(nullptr, CFG_NOTIFICATIONS, value);
 }
 
+static void CheatFileChanged(ConfigItemBoolean *item, bool value) {
+    if (!item || !item->identifier) return;
+
+    for (size_t index = 0; index < gCheats.size(); ++index) {
+        if (gCheats[index].configId != item->identifier) continue;
+
+        gCheatEnabled[index].store(value, std::memory_order_relaxed);
+        WUPSStorageAPI_StoreBool(nullptr, item->identifier, value);
+
+        char message[128];
+        std::snprintf(message, sizeof(message), "%s: %s",
+                      gCheats[index].name.c_str(), value ? "enabled" : "disabled");
+        Notify(message);
+        return;
+    }
+}
+
 static WUPSConfigAPICallbackStatus ConfigMenuOpenedCallback(WUPSConfigCategoryHandle root) {
     WUPSConfigCategoryHandle category;
     WUPSConfigAPICreateCategoryOptionsV1 categoryOptions = {.name = "Settings"};
@@ -319,6 +374,16 @@ static WUPSConfigAPICallbackStatus ConfigMenuOpenedCallback(WUPSConfigCategoryHa
             "Notifications", true, gNotifications, &NotificationsChanged) !=
         WUPSCONFIG_API_RESULT_SUCCESS) {
         return WUPSCONFIG_API_CALLBACK_RESULT_ERROR;
+    }
+
+    // Add one switch for each valid cheat file loaded for the active title.
+    for (size_t index = 0; index < gCheats.size(); ++index) {
+        if (WUPSConfigItemBoolean_AddToCategory(
+                category, gCheats[index].configId.c_str(), gCheats[index].name.c_str(),
+                true, gCheatEnabled[index].load(std::memory_order_relaxed),
+                &CheatFileChanged) != WUPSCONFIG_API_RESULT_SUCCESS) {
+            return WUPSCONFIG_API_CALLBACK_RESULT_ERROR;
+        }
     }
 
     if (WUPSConfigAPI_Category_AddCategory(root, category) != WUPSCONFIG_API_RESULT_SUCCESS) {

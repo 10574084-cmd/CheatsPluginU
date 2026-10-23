@@ -6,7 +6,7 @@ on:
       tag:
         description: "Version tag, e.g. v0.1.0"
         required: true
-        default: "v0.1.0"
+        default: "v0.2.0"
 
 permissions:
   contents: write
@@ -29,7 +29,7 @@ jobs:
             --title "CheatsPlugin $TAG" \
             --notes "## CheatsPlugin $TAG
 
-          Aroma plugin for Wii U.
+          Aroma plugin for Wii U. Version 0.2.0 fixes the SD-card folder path and adds per-file enable/disable switches.
 
           ### Installation
           Copy `CheatsPlugin.wps` to `sd:/wiiu/environments/aroma/plugins/`.
