@@ -1,45 +1,35 @@
 # CheatsPluginU
 
-Plugin de Aroma para Wii U que carga archivos de trucos por Title ID desde la tarjeta SD y permite activar o desactivar cada archivo desde la configuración de WUPS.
+Plugin de Aroma para Wii U que carga archivos locales y busca automáticamente trucos online usando el Title ID del juego.
 
-## Descargar e instalar
+## Búsqueda automática
 
-1. Usa una Wii U con Aroma instalado.
-2. Descarga el artefacto CheatsPlugin-wps de GitHub Actions o el archivo de una versión publicada.
-3. Copia CheatsPlugin.wps a sd:/wiiu/environments/aroma/plugins/CheatsPlugin.wps.
-4. Crea una carpeta para el juego en sd:/wiiu/cheatsPlugin/TITLE_ID/, usando el Title ID real de 16 caracteres hexadecimales en mayúsculas.
-5. Guarda cada conjunto de trucos en un archivo .txt o .cht dentro de esa carpeta y abre la configuración del plugin cuando el juego correspondiente esté activo.
+- En el inicio de cada juego, consulta la base de datos pública uCodes y comprueba el Title ID exacto.
+- Los trucos compatibles aparecen como interruptores individuales en el menú de configuración de CheatsPlugin.
+- Los trucos online quedan desactivados por defecto para evitar aplicar varios cambios desconocidos a la vez.
+- La versión actual solo convierte escrituras directas y constantes de formato gecko.poke32(address, value). Los códigos con punteros, condiciones, secuencias u otros tipos de comandos se descartan en vez de aplicarse parcialmente.
+- La búsqueda no inventa códigos: si no existe una entrada para ese Title ID o no hay líneas compatibles, lo informa con una notificación.
 
-Ejemplo de estructura:
+## Requisitos
 
-    sd:/wiiu/
-    ├── environments/aroma/plugins/CheatsPlugin.wps
-    └── cheatsPlugin/
-        └── 000500001234ABCD/
-            ├── velocidad.txt
-            └── monedas.cht
+1. Wii U con Aroma y conexión a Internet.
+2. CheatsPlugin.wps en sd:/wiiu/environments/aroma/plugins/.
+3. CURLWrapperModule.wms instalado en sd:/wiiu/environments/aroma/modules/ para las solicitudes HTTPS. Descárgalo del repositorio oficial: https://github.com/wiiu-env/CURLWrapperModule.
 
-Los nombres y Title ID del ejemplo son marcadores de posición. Usa el Title ID exacto del juego instalado y códigos verificados para su versión.
+El plugin se enlaza con libcurlwrapper, pero el archivo CURLWrapperModule.wms debe instalarse por separado en la SD.
 
-## Formato compatible
+## Trucos locales
 
-Esta versión no interpreta códigos Gecko, Action Replay ni formatos de otros gestores de trucos. Cada línea válida debe ser una escritura de 32 bits, con este formato:
+Los archivos locales van en sd:/wiiu/cheatsPlugin/TITLE_ID/. Cada archivo .txt o .cht debe contener escrituras directas de 32 bits con el formato:
 
     0xDIRECCION = 0xVALOR
 
-Los valores anteriores son marcadores, no un truco funcional. Se permiten líneas vacías y comentarios que empiezan con # o ;. Las direcciones deben estar alineadas a 4 bytes y dentro del rango aceptado por el plugin.
+## Fuente y cobertura
 
-## Activar y desactivar archivos
+La búsqueda utiliza los metadatos y códigos publicados en https://github.com/vincent-coding/uCodes. El catálogo actual se consulta mediante sus entradas indexadas 0 a 3; por ello la cobertura se limita a los juegos para los que esa base contiene un Title ID. La base observada incluye una entrada para Mario Kart 8, pero su selección de códigos puede variar.
 
-- Cada archivo válido aparece como interruptor individual en la configuración de CheatsPluginU cuando el juego correspondiente está activo.
-- El estado de cada archivo se guarda de forma independiente por juego y nombre de archivo.
-- Desactivar un archivo detiene la reaplicación de sus escrituras. Los cambios de memoria que ya se hayan aplicado no necesariamente se revierten.
-- El interruptor global para habilitar o deshabilitar el plugin sigue disponible. Los cambios de ese interruptor global se aplican en el siguiente inicio del juego.
+## Precauciones
 
-## Límites y seguridad
-
-- Usa únicamente direcciones y valores verificados para el juego, Title ID y versión exactos. Un código incorrecto puede congelar el juego o alterar datos de la partida.
-- Haz una copia de seguridad de los datos guardados y prueba primero en modo local.
-- Solo se admiten escrituras directas de 32 bits. No se admiten códigos condicionales, códigos multilínea con sintaxis propia ni descifrado de códigos.
-- El plugin requiere Aroma y los módulos de runtime que utiliza, incluidos KernelModule y NotificationModule.
-- Que GitHub Actions compile el archivo confirma que se generó el binario; no demuestra que cada código funcione en una Wii U real. La prueba final debe hacerse en la consola.
+- Activa uno o pocos trucos a la vez, ya que un valor incorrecto puede congelar el juego o cambiar datos de partida.
+- Desactivar un truco evita que se siga reaplicando, pero no restaura los valores que ya se escribieron.
+- La compilación de GitHub Actions no sustituye una prueba en una Wii U real.
