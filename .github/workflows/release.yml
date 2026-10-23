@@ -11,7 +11,7 @@ on:
       tag:
         description: "Version tag, e.g. v0.3.0"
         required: true
-        default: "v0.4.0"
+        default: "v0.5.0"
 
 permissions:
   contents: write
@@ -29,13 +29,13 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag || 'v0.4.0' }}
+          TAG: ${{ inputs.tag || 'v0.5.0' }}
         run: |
           gh release create "$TAG" CheatsPlugin.wps \
             --title "CheatsPlugin $TAG" \
             --notes "## CheatsPlugin $TAG
 
-          Aroma plugin for Wii U. Version 0.4.0 discovers the live uCodes game-directory catalog over Wi-Fi instead of hardcoding only indexes 0–3. CURLWrapperModule.wms is required for HTTPS requests.
+          Aroma plugin for Wii U. Version 0.5.0 explicitly requests filesystem and kernel access, checks permissions at game start, and accepts plain hexadecimal local address/value rows. CURLWrapperModule.wms is required for HTTPS requests.
 
           ### Installation
           Copy CheatsPlugin.wps to sd:/wiiu/environments/aroma/plugins/.
