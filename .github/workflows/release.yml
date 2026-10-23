@@ -1,6 +1,11 @@
 name: Release CheatsPlugin
 
 on:
+  # Publish the initial v0.2.0 release only on the specifically named commit.
+  # Manual runs remain available for future version tags.
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       tag:
@@ -13,6 +18,7 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'Publish CheatsPlugin v0.2.0 Release')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +29,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || 'v0.2.0' }}
         run: |
           gh release create "$TAG" CheatsPlugin.wps \
             --title "CheatsPlugin $TAG" \
